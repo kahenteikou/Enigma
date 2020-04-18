@@ -148,7 +148,6 @@ test {
 
 // Set the main class.
 jar.manifest.attributes 'Main-Class': 'cuchaz.enigma.Main'
-
 // Make the "fat" application jar. This is useful to just throw in a classpath
 // for tests, though it includes some slightly useless stuff.
 shadowJar {
