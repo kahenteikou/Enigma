@@ -1,10 +1,12 @@
 plugins {
     id 'maven-publish'
+    id 'maven'
 }
 
 subprojects {
     apply plugin: 'java'
     apply plugin: 'maven-publish'
+    apply plugin: 'maven'
 
     sourceCompatibility = 1.8
     targetCompatibility = 1.8
@@ -37,17 +39,13 @@ subprojects {
     java {
         withSourcesJar()
     }
-
-    publishing {
-        publications {
-            "$project.name"(MavenPublication) {
-                groupId project.group
-                artifactId project.name
-                version project.version
-                from components.java
-            }
+    uploadArchives {
+    repositories {
+        mavenDeployer {
+            repository(url: "i:\\maven")
         }
     }
+}
 }
 
 allprojects {
