@@ -1,24 +1,31 @@
 package cuchaz.enigma.gui.util;
 
-import java.awt.Color;
-import java.awt.Cursor;
-import java.awt.Desktop;
-import java.awt.Font;
+import cuchaz.enigma.gui.Gui;
+import cuchaz.enigma.translation.representation.AccessFlags;
+import cuchaz.enigma.translation.representation.entry.ClassEntry;
+import cuchaz.enigma.utils.Os;
+
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.font.TextAttribute;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Map;
 
-import javax.swing.JComponent;
-import javax.swing.JLabel;
-import javax.swing.ToolTipManager;
-
-import cuchaz.enigma.utils.Os;
-
 public class GuiUtil {
+    public static final Icon CLASS_ICON = loadIcon("class");
+    public static final Icon INTERFACE_ICON = loadIcon("interface");
+    public static final Icon ENUM_ICON = loadIcon("enum");
+    public static final Icon ANNOTATION_ICON = loadIcon("annotation");
+    public static final Icon METHOD_ICON = loadIcon("method");
+    public static final Icon FIELD_ICON = loadIcon("field");
+    public static final Icon CONSTRUCTOR_ICON = loadIcon("constructor");
+
     public static void openUrl(String url) {
         try {
             switch (Os.getOs()) {
@@ -70,4 +77,33 @@ public class GuiUtil {
         return link;
     }
 
+    public static Icon loadIcon(String name) {
+        try {
+            InputStream inputStream = GuiUtil.class.getResourceAsStream("/icons/" + name + ".png");
+            Image image = ImageIO.read(inputStream).getScaledInstance(ScaleUtil.scale(16), ScaleUtil.scale(16), Image.SCALE_DEFAULT);
+            return new ImageIcon(image);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return null;
+    }
+
+    public static Icon getClassIcon(Gui gui, ClassEntry entry) {
+        AccessFlags access = gui.getController().project.getJarIndex().getEntryIndex().getClassAccess(entry);
+
+        if (access != null) {
+            if (access.isAnnotation()) {
+                return ANNOTATION_ICON;
+            } else if (access.isInterface()) {
+                return INTERFACE_ICON;
+            } else if (access.isEnum()) {
+                return ENUM_ICON;
+            }
+
+            // TODO: Record icon?
+        }
+
+        return CLASS_ICON;
+    }
 }

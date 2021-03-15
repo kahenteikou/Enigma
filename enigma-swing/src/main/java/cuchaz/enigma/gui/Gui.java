@@ -37,10 +37,7 @@ import cuchaz.enigma.gui.config.UiConfig;
 import cuchaz.enigma.gui.dialog.CrashDialog;
 import cuchaz.enigma.gui.dialog.JavadocDialog;
 import cuchaz.enigma.gui.dialog.SearchDialog;
-import cuchaz.enigma.gui.elements.CollapsibleTabbedPane;
-import cuchaz.enigma.gui.elements.EditorTabPopupMenu;
-import cuchaz.enigma.gui.elements.MenuBar;
-import cuchaz.enigma.gui.elements.ValidatableUi;
+import cuchaz.enigma.gui.elements.*;
 import cuchaz.enigma.gui.events.EditorActionListener;
 import cuchaz.enigma.gui.panels.*;
 import cuchaz.enigma.gui.util.History;
@@ -54,10 +51,7 @@ import cuchaz.enigma.network.packet.RemoveMappingC2SPacket;
 import cuchaz.enigma.network.packet.RenameC2SPacket;
 import cuchaz.enigma.source.Token;
 import cuchaz.enigma.translation.mapping.EntryRemapper;
-import cuchaz.enigma.translation.representation.entry.ClassEntry;
-import cuchaz.enigma.translation.representation.entry.Entry;
-import cuchaz.enigma.translation.representation.entry.FieldEntry;
-import cuchaz.enigma.translation.representation.entry.MethodEntry;
+import cuchaz.enigma.translation.representation.entry.*;
 import cuchaz.enigma.utils.I18n;
 import cuchaz.enigma.utils.validation.ParameterizedMessage;
 import cuchaz.enigma.utils.validation.ValidationContext;
@@ -85,6 +79,7 @@ public class Gui implements LanguageChangeListener {
 	private JPanel classesPanel;
 	private JSplitPane splitClasses;
 	private IdentifierPanel infoPanel;
+	private StructurePanel structurePanel;
 	private JTree inheritanceTree;
 	private JTree implementationsTree;
 	private JTree callsTree;
@@ -107,6 +102,7 @@ public class Gui implements LanguageChangeListener {
 	private JLabel statusLabel;
 
 	private final EditorTabPopupMenu editorTabPopupMenu;
+	private final DeobfPanelPopupMenu deobfPanelPopupMenu;
 	private final JTabbedPane openFiles;
 	private final HashBiMap<ClassEntry, EditorPanel> editors = HashBiMap.create();
 
@@ -165,13 +161,17 @@ public class Gui implements LanguageChangeListener {
 		// init info panel
 		infoPanel = new IdentifierPanel(this);
 
+		// init structure panel
+		this.structurePanel = new StructurePanel(this);
+
 		// init inheritance panel
 		inheritanceTree = new JTree();
 		inheritanceTree.setModel(null);
+		inheritanceTree.setShowsRootHandles(true);
 		inheritanceTree.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent event) {
-				if (event.getClickCount() >= 2) {
+				if (event.getClickCount() >= 2 && event.getButton() == MouseEvent.BUTTON1) {
 					// get the selected node
 					TreePath path = inheritanceTree.getSelectionPath();
 					if (path == null) {
@@ -201,10 +201,11 @@ public class Gui implements LanguageChangeListener {
 		// init implementations panel
 		implementationsTree = new JTree();
 		implementationsTree.setModel(null);
+		implementationsTree.setShowsRootHandles(true);
 		implementationsTree.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent event) {
-				if (event.getClickCount() >= 2) {
+				if (event.getClickCount() >= 2 && event.getButton() == MouseEvent.BUTTON1) {
 					// get the selected node
 					TreePath path = implementationsTree.getSelectionPath();
 					if (path == null) {
@@ -229,11 +230,12 @@ public class Gui implements LanguageChangeListener {
 		// init call panel
 		callsTree = new JTree();
 		callsTree.setModel(null);
+		callsTree.setShowsRootHandles(true);
 		callsTree.addMouseListener(new MouseAdapter() {
 			@SuppressWarnings("unchecked")
 			@Override
 			public void mouseClicked(MouseEvent event) {
-				if (event.getClickCount() >= 2) {
+				if (event.getClickCount() >= 2 && event.getButton() == MouseEvent.BUTTON1) {
 					// get the selected node
 					TreePath path = callsTree.getSelectionPath();
 					if (path == null) {
@@ -289,6 +291,22 @@ public class Gui implements LanguageChangeListener {
 						editorTabPopupMenu.show(openFiles, e.getX(), e.getY(), EditorPanel.byUi(openFiles.getComponentAt(i)));
 					}
 				}
+
+				showStructure(getActiveEditor());
+			}
+		});
+
+		deobfPanelPopupMenu = new DeobfPanelPopupMenu(this);
+		deobfPanel.deobfClasses.addMouseListener(new MouseAdapter() {
+			@Override
+			public void mousePressed(MouseEvent e) {
+				if (SwingUtilities.isRightMouseButton(e)) {
+					deobfPanel.deobfClasses.setSelectionRow(deobfPanel.deobfClasses.getClosestRowForLocation(e.getX(), e.getY()));
+					int i = deobfPanel.deobfClasses.getRowForPath(deobfPanel.deobfClasses.getSelectionPath());
+					if (i != -1) {
+						deobfPanelPopupMenu.show(deobfPanel.deobfClasses, e.getX(), e.getY());
+					}
+				}
 			}
 		});
 
@@ -299,6 +317,7 @@ public class Gui implements LanguageChangeListener {
 		centerPanel.add(openFiles, BorderLayout.CENTER);
 		tabs = new JTabbedPane();
 		tabs.setPreferredSize(ScaleUtil.getDimension(250, 0));
+		tabs.addTab(I18n.translate("info_panel.tree.structure"), structurePanel);
 		tabs.addTab(I18n.translate("info_panel.tree.inheritance"), inheritancePanel);
 		tabs.addTab(I18n.translate("info_panel.tree.implementations"), implementationsPanel);
 		tabs.addTab(I18n.translate("info_panel.tree.calls"), callPanel);
@@ -474,7 +493,9 @@ public class Gui implements LanguageChangeListener {
 		});
 		if (editorPanel != null) {
 			openFiles.setSelectedComponent(editors.get(entry).getUi());
+			showStructure(editorPanel);
 		}
+
 		return editorPanel;
 	}
 
@@ -494,6 +515,7 @@ public class Gui implements LanguageChangeListener {
 	public void closeEditor(EditorPanel ed) {
 		openFiles.remove(ed.getUi());
 		editors.inverse().remove(ed);
+		showStructure(getActiveEditor());
 		ed.destroy();
 	}
 
@@ -583,6 +605,32 @@ public class Gui implements LanguageChangeListener {
 		infoPanel.startRenaming();
 	}
 
+	public void showStructure(EditorPanel editor) {
+		JTree structureTree = this.structurePanel.getStructureTree();
+		structureTree.setModel(null);
+
+		if (editor == null) {
+			this.structurePanel.getSortingPanel().setVisible(false);
+			return;
+		}
+
+		ClassEntry classEntry = editor.getClassHandle().getRef();
+		if (classEntry == null) return;
+
+		this.structurePanel.getSortingPanel().setVisible(true);
+
+		// get the class structure
+		StructureTreeNode node = this.controller.getClassStructure(classEntry, this.structurePanel.shouldHideDeobfuscated());
+
+		// show the tree at the root
+		TreePath path = getPathToRoot(node);
+		structureTree.setModel(new DefaultTreeModel((TreeNode) path.getPathComponent(0)));
+		structureTree.expandPath(path);
+		structureTree.setSelectionRow(structureTree.getRowForPath(path));
+
+		redraw();
+	}
+
 	public void showInheritance(EditorPanel editor) {
 		EntryReference<Entry<?>, Entry<?>> cursorReference = editor.getCursorReference();
 		if (cursorReference == null) return;
@@ -609,7 +657,7 @@ public class Gui implements LanguageChangeListener {
 			inheritanceTree.setSelectionRow(inheritanceTree.getRowForPath(path));
 		}
 
-		tabs.setSelectedIndex(0);
+		tabs.setSelectedIndex(1);
 
 		redraw();
 	}
@@ -637,7 +685,7 @@ public class Gui implements LanguageChangeListener {
 			implementationsTree.setSelectionRow(implementationsTree.getRowForPath(path));
 		}
 
-		tabs.setSelectedIndex(1);
+		tabs.setSelectedIndex(2);
 
 		redraw();
 	}
@@ -657,7 +705,7 @@ public class Gui implements LanguageChangeListener {
 			callsTree.setModel(new DefaultTreeModel(node));
 		}
 
-		tabs.setSelectedIndex(2);
+		tabs.setSelectedIndex(3);
 
 		redraw();
 	}
@@ -747,10 +795,8 @@ public class Gui implements LanguageChangeListener {
 				DefaultMutableTreeNode childNode = (DefaultMutableTreeNode) node.getChildAt(i);
 				ClassEntry prevDataChild = (ClassEntry) childNode.getUserObject();
 				ClassEntry dataChild = new ClassEntry(data + "/" + prevDataChild.getSimpleName());
-				this.controller.rename(vc, new EntryReference<>(prevDataChild, prevDataChild.getFullName()), dataChild.getFullName(), false);
-				if (!vc.canProceed()) return;
-				this.controller.sendPacket(new RenameC2SPacket(prevDataChild, dataChild.getFullName(), false));
-				childNode.setUserObject(dataChild);
+
+				onPanelRename(vc, prevDataChild, dataChild, node);
 			}
 			node.setUserObject(data);
 			// Ob package will never be modified, just reload deob view
@@ -877,15 +923,18 @@ public class Gui implements LanguageChangeListener {
 			splitRight.setRightComponent(logSplit);
 			logSplit.setLeftComponent(tabs);
 		}
+
+		splitRight.setDividerLocation(splitRight.getDividerLocation());
 	}
 
 	@Override
 	public void retranslateUi() {
 		this.jarFileChooser.setTitle(I18n.translate("menu.file.jar.open"));
 		this.exportJarFileChooser.setTitle(I18n.translate("menu.file.export.jar"));
-		this.tabs.setTitleAt(0, I18n.translate("info_panel.tree.inheritance"));
-		this.tabs.setTitleAt(1, I18n.translate("info_panel.tree.implementations"));
-		this.tabs.setTitleAt(2, I18n.translate("info_panel.tree.calls"));
+		this.tabs.setTitleAt(0, I18n.translate("info_panel.tree.structure"));
+		this.tabs.setTitleAt(1, I18n.translate("info_panel.tree.inheritance"));
+		this.tabs.setTitleAt(2, I18n.translate("info_panel.tree.implementations"));
+		this.tabs.setTitleAt(3, I18n.translate("info_panel.tree.calls"));
 		this.logTabs.setTitleAt(0, I18n.translate("log_panel.users"));
 		this.logTabs.setTitleAt(1, I18n.translate("log_panel.messages"));
 		this.connectionStatusLabel.setText(I18n.translate(connectionState == ConnectionState.NOT_CONNECTED ? "status.disconnected" : "status.connected"));
@@ -895,7 +944,10 @@ public class Gui implements LanguageChangeListener {
 		this.menuBar.retranslateUi();
 		this.obfPanel.retranslateUi();
 		this.deobfPanel.retranslateUi();
+		this.deobfPanelPopupMenu.retranslateUi();
 		this.infoPanel.retranslateUi();
+		this.structurePanel.retranslateUi();
+		this.editors.values().forEach(EditorPanel::retranslateUi);
 	}
 
 	public void setConnectionState(ConnectionState state) {

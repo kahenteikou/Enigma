@@ -18,13 +18,14 @@ import java.util.stream.Stream;
 
 import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
+import cuchaz.enigma.api.service.ObfuscationTestService;
+import cuchaz.enigma.classprovider.ObfuscationFixClassProvider;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.tree.ClassNode;
 
 import cuchaz.enigma.analysis.EntryReference;
 import cuchaz.enigma.analysis.index.JarIndex;
 import cuchaz.enigma.api.service.NameProposalService;
-import cuchaz.enigma.bytecode.translators.SourceFixVisitor;
 import cuchaz.enigma.bytecode.translators.TranslationClassVisitor;
 import cuchaz.enigma.classprovider.ClassProvider;
 import cuchaz.enigma.source.Decompiler;
@@ -158,8 +159,38 @@ public class EnigmaProject {
 		return obfReference.isNamed() && isRenamable(obfReference.getNameableEntry());
 	}
 
+	public boolean isObfuscated(Entry<?> entry) {
+		String name = entry.getName();
+
+		List<ObfuscationTestService> obfuscationTestServices = this.getEnigma().getServices().get(ObfuscationTestService.TYPE);
+		if (!obfuscationTestServices.isEmpty()) {
+			for (ObfuscationTestService service : obfuscationTestServices) {
+				if (service.testDeobfuscated(entry)) {
+					return false;
+				}
+			}
+		}
+
+		List<NameProposalService> nameProposalServices = this.getEnigma().getServices().get(NameProposalService.TYPE);
+		if (!nameProposalServices.isEmpty()) {
+			for (NameProposalService service : nameProposalServices) {
+				if (service.proposeName(entry, mapper).isPresent()) {
+					return false;
+				}
+			}
+		}
+
+		String mappedName = mapper.deobfuscate(entry).getName();
+		if (mappedName != null && !mappedName.isEmpty() && !mappedName.equals(name)) {
+			return false;
+		}
+
+		return true;
+	}
+
 	public JarExport exportRemappedJar(ProgressListener progress) {
 		Collection<ClassEntry> classEntries = jarIndex.getEntryIndex().getClasses();
+		ClassProvider fixingClassProvider = new ObfuscationFixClassProvider(classProvider, jarIndex);
 
 		NameProposalService[] nameProposalServices = getEnigma().getServices().get(NameProposalService.TYPE).toArray(new NameProposalService[0]);
 		Translator deobfuscator = nameProposalServices.length == 0 ? mapper.getDeobfuscator() : new ProposingTranslator(mapper, nameProposalServices);
@@ -172,10 +203,10 @@ public class EnigmaProject {
 					ClassEntry translatedEntry = deobfuscator.translate(entry);
 					progress.step(count.getAndIncrement(), translatedEntry.toString());
 
-					ClassNode node = classProvider.get(entry.getFullName());
+					ClassNode node = fixingClassProvider.get(entry.getFullName());
 					if (node != null) {
 						ClassNode translatedNode = new ClassNode();
-						node.accept(new TranslationClassVisitor(deobfuscator, Enigma.ASM_VERSION, new SourceFixVisitor(Enigma.ASM_VERSION, translatedNode, jarIndex)));
+						node.accept(new TranslationClassVisitor(deobfuscator, Enigma.ASM_VERSION, translatedNode));
 						return translatedNode;
 					}
 
@@ -184,13 +215,15 @@ public class EnigmaProject {
 				.filter(Objects::nonNull)
 				.collect(Collectors.toMap(n -> n.name, Functions.identity()));
 
-		return new JarExport(compiled);
+		return new JarExport(mapper, compiled);
 	}
 
 	public static final class JarExport {
+		private final EntryRemapper mapper;
 		private final Map<String, ClassNode> compiled;
 
-		JarExport(Map<String, ClassNode> compiled) {
+		JarExport(EntryRemapper mapper, Map<String, ClassNode> compiled) {
+			this.mapper = mapper;
 			this.compiled = compiled;
 		}
 
@@ -213,10 +246,6 @@ public class EnigmaProject {
 					out.closeEntry();
 				}
 			}
-		}
-
-		public SourceExport decompile(ProgressListener progress, DecompilerService decompilerService) {
-			return this.decompile(progress, decompilerService, DecompileErrorStrategy.PROPAGATE);
 		}
 
 		public SourceExport decompile(ProgressListener progress, DecompilerService decompilerService, DecompileErrorStrategy errorStrategy) {
@@ -266,7 +295,7 @@ public class EnigmaProject {
 		}
 
 		private String decompileClass(ClassNode translatedNode, Decompiler decompiler) {
-			return decompiler.getSource(translatedNode.name).asString();
+			return decompiler.getSource(translatedNode.name, mapper).asString();
 		}
 	}
 

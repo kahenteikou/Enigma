@@ -46,6 +46,19 @@ public final class UiConfig {
 		swing.data().section("General").setDouble("Scale Factor", scale);
 	}
 
+	/**
+	 * Gets the dimensions of the different panels of the GUI.
+	 * <p>These dimensions are used to determine the location of the separators between these panels.</p>
+	 *
+	 * <ul>
+	 *     <li>[0] - The height of the obfuscated classes panel</li>
+	 *     <li>[1] - The width of the classes panel</li>
+	 *     <li>[2] - The width of the center panel</li>
+	 *     <li>[3] - The height of the tabs panel. Only used if the logs panel should appear</li>
+	 * </ul>
+	 *
+	 * @return an integer array composed of these 4 dimensions
+	 */
 	public static int[] getLayout() {
 		return swing.data().section("Main Window").getIntArray("Layout").orElseGet(() -> new int[] { -1, -1, -1, -1 });
 	}
@@ -264,6 +277,22 @@ public final class UiConfig {
 
 	public static void setLastSelectedDir(String directory) {
 		swing.data().section("File Dialog").setString("Selected", directory);
+	}
+
+	public static String getLastTopLevelPackage() {
+		return swing.data().section("Mapping Stats").getString("Top-Level Package").orElse("");
+	}
+
+	public static void setLastTopLevelPackage(String topLevelPackage) {
+		swing.data().section("Mapping Stats").setString("Top-Level Package", topLevelPackage);
+	}
+
+	public static boolean shouldIncludeSyntheticParameters() {
+		return swing.data().section("Mapping Stats").setIfAbsentBool("Synthetic Parameters", false);
+	}
+
+	public static void setIncludeSyntheticParameters(boolean b) {
+		swing.data().section("Mapping Stats").setBool("Synthetic Parameters", b);
 	}
 
 	public static void setLookAndFeelDefaults(LookAndFeel laf, boolean isDark) {

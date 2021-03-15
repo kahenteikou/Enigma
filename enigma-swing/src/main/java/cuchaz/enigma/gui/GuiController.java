@@ -100,8 +100,10 @@ public class GuiController implements ClientPacketHandler {
 			project = enigma.openJar(jarPath, new ClasspathClassProvider(), progress);
 			indexTreeBuilder = new IndexTreeBuilder(project.getJarIndex());
 			chp = new ClassHandleProvider(project, UiConfig.getDecompiler().service);
-			gui.onFinishOpenJar(jarPath.getFileName().toString());
-			refreshClasses();
+			SwingUtilities.invokeLater(() -> {
+				gui.onFinishOpenJar(jarPath.getFileName().toString());
+				refreshClasses();
+			});
 		});
 	}
 
@@ -128,7 +130,7 @@ public class GuiController implements ClientPacketHandler {
 				loadedMappingPath = path;
 
 				refreshClasses();
-				chp.invalidateMapped();
+				chp.invalidateJavadoc();
 			} catch (MappingParseException e) {
 				JOptionPane.showMessageDialog(gui.getFrame(), e.getMessage());
 			}
@@ -141,7 +143,7 @@ public class GuiController implements ClientPacketHandler {
 
 		project.setMappings(mappings);
 		refreshClasses();
-		chp.invalidateMapped();
+		chp.invalidateJavadoc();
 	}
 
 	public CompletableFuture<Void> saveMappings(Path path) {
@@ -176,7 +178,7 @@ public class GuiController implements ClientPacketHandler {
 
 		this.gui.setMappingsFile(null);
 		refreshClasses();
-		chp.invalidateMapped();
+		chp.invalidateJavadoc();
 	}
 
 	public void reloadAll() {
@@ -271,7 +273,7 @@ public class GuiController implements ClientPacketHandler {
 		if (entry == null) {
 			throw new IllegalArgumentException("Entry cannot be null!");
 		}
-		openReference(new EntryReference<>(entry, entry.getName()));
+		openReference(EntryReference.declaration(entry, entry.getName()));
 	}
 
 	/**
@@ -299,7 +301,7 @@ public class GuiController implements ClientPacketHandler {
 	 * @param reference the reference
 	 */
 	private void setReference(EntryReference<Entry<?>, Entry<?>> reference) {
-		gui.openClass(reference.getLocationClassEntry()).showReference(reference);
+		gui.openClass(reference.getLocationClassEntry().getOutermostClass()).showReference(reference);
 	}
 
 	public Collection<Token> getTokensForReference(DecompiledClassSource source, EntryReference<Entry<?>, Entry<?>> reference) {
@@ -395,6 +397,12 @@ public class GuiController implements ClientPacketHandler {
 		chp.invalidateMapped();
 	}
 
+	public StructureTreeNode getClassStructure(ClassEntry entry, boolean hideDeobfuscated) {
+		StructureTreeNode rootNode = new StructureTreeNode(this.project, entry, entry);
+		rootNode.load(this.project, hideDeobfuscated);
+		return rootNode;
+	}
+
 	public ClassInheritanceTreeNode getClassInheritance(ClassEntry entry) {
 		Translator translator = project.getMapper().getDeobfuscator();
 		ClassInheritanceTreeNode rootNode = indexTreeBuilder.buildClassInheritance(translator, entry);
@@ -454,6 +462,7 @@ public class GuiController implements ClientPacketHandler {
 		Entry<?> entry = reference.getNameableEntry();
 		EntryMapping previous = project.getMapper().getDeobfMapping(entry);
 		project.getMapper().mapFromObf(vc, entry, previous != null ? previous.withName(newName) : new EntryMapping(newName), true, validateOnly);
+		gui.showStructure(gui.getActiveEditor());
 
 		if (validateOnly || !vc.canProceed()) return;
 
@@ -466,6 +475,7 @@ public class GuiController implements ClientPacketHandler {
 	@Override
 	public void removeMapping(ValidationContext vc, EntryReference<Entry<?>, Entry<?>> reference) {
 		project.getMapper().removeByObf(vc, reference.getNameableEntry());
+		gui.showStructure(gui.getActiveEditor());
 
 		if (!vc.canProceed()) return;
 
@@ -504,6 +514,7 @@ public class GuiController implements ClientPacketHandler {
 		EntryRemapper mapper = project.getMapper();
 		Entry<?> entry = reference.getNameableEntry();
 		mapper.mapFromObf(vc, entry, new EntryMapping(mapper.deobfuscate(entry).getName()));
+		gui.showStructure(gui.getActiveEditor());
 
 		if (!vc.canProceed()) return;
 
@@ -513,9 +524,9 @@ public class GuiController implements ClientPacketHandler {
 		chp.invalidateMapped();
 	}
 
-	public void openStats(Set<StatsMember> includedMembers, String topLevelPackage) {
+	public void openStats(Set<StatsMember> includedMembers, String topLevelPackage, boolean includeSynthetic) {
 		ProgressDialog.runOffThread(gui.getFrame(), progress -> {
-			String data = new StatsGenerator(project).generate(progress, includedMembers, topLevelPackage).getTreeJson();
+			String data = new StatsGenerator(project).generate(progress, includedMembers, topLevelPackage, includeSynthetic).getTreeJson();
 
 			try {
 				File statsFile = File.createTempFile("stats", ".html");

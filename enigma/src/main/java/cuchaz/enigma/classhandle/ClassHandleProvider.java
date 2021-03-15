@@ -118,6 +118,16 @@ public final class ClassHandleProvider {
 	}
 
 	/**
+	 * Invalidates all javadoc. This causes all open class handles to be
+	 * re-remapped.
+	 */
+	public void invalidateJavadoc() {
+		withLock(lock.readLock(), () -> {
+			handles.values().forEach(Entry::invalidateJavadoc);
+		});
+	}
+
+	/**
 	 * Invalidates javadoc for a single class. This also causes the class to be
 	 * remapped again.
 	 *
@@ -128,6 +138,10 @@ public final class ClassHandleProvider {
 			Entry e = handles.get(entry);
 			if (e != null) {
 				e.invalidateJavadoc();
+			}
+
+			if (entry.isInnerClass()) {
+				this.invalidateJavadoc(entry.getOuterClass());
 			}
 		});
 	}
@@ -251,7 +265,7 @@ public final class ClassHandleProvider {
 			int v = javadocVersion.incrementAndGet();
 			return f.thenApplyAsync(res -> {
 				if (res == null || javadocVersion.get() != v) return null;
-				Result<Source, ClassHandleError> jdSource = res.map(s -> s.addJavadocs(p.project.getMapper()));
+				Result<Source, ClassHandleError> jdSource = res.map(s -> s.withJavadocs(p.project.getMapper()));
 				withLock(lock.readLock(), () -> new ArrayList<>(handles)).forEach(h -> h.onDocsChanged(jdSource));
 				return jdSource;
 			}, p.pool);
