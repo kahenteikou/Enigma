@@ -51,6 +51,7 @@ subprojects {
 
         it.options.release = 16
     }
+}
 
 allprojects {
     publishing {
