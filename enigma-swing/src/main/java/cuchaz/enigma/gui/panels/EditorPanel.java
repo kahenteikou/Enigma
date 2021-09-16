@@ -11,7 +11,6 @@ import javax.annotation.Nullable;
 import javax.swing.*;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
-import javax.swing.text.Highlighter;
 import javax.swing.text.Highlighter.HighlightPainter;
 
 import de.sciss.syntaxpane.DefaultSyntaxKit;
@@ -22,6 +21,7 @@ import cuchaz.enigma.classhandle.ClassHandle;
 import cuchaz.enigma.classhandle.ClassHandleError;
 import cuchaz.enigma.events.ClassHandleListener;
 import cuchaz.enigma.gui.BrowserCaret;
+import cuchaz.enigma.gui.EditableType;
 import cuchaz.enigma.gui.Gui;
 import cuchaz.enigma.gui.GuiController;
 import cuchaz.enigma.gui.config.LookAndFeel;
@@ -98,6 +98,10 @@ public class EditorPanel {
 		this.editor.setBackground(UiConfig.getEditorBackgroundColor());
 		DefaultSyntaxKit kit = (DefaultSyntaxKit) this.editor.getEditorKit();
 		kit.toggleComponent(this.editor, "de.sciss.syntaxpane.components.TokenMarker");
+
+		// set unit increment to height of one line, the amount scrolled per
+		// mouse wheel rotation is then controlled by OS settings
+		this.editorScrollPane.getVerticalScrollBar().setUnitIncrement(this.editor.getFontMetrics(this.editor.getFont()).getHeight());
 
 		// init editor popup menu
 		this.popupMenu = new EditorPopupMenu(this, gui);
@@ -301,17 +305,10 @@ public class EditorPanel {
 
 	public void displayError(ClassHandleError t) {
 		this.setDisplayMode(DisplayMode.ERRORED);
-		String str;
-		switch (t.type) {
-			case DECOMPILE:
-				str = "editor.decompile_error";
-				break;
-			case REMAP:
-				str = "editor.remap_error";
-				break;
-			default:
-				throw new IllegalStateException("unreachable");
-		}
+		String str = switch (t.type) {
+			case DECOMPILE -> "editor.decompile_error";
+			case REMAP -> "editor.remap_error";
+		};
 		this.errorLabel.setText(I18n.translate(str));
 		this.errorTextArea.setText(t.getStackTrace());
 		this.errorTextArea.setCaretPosition(0);
@@ -464,10 +461,26 @@ public class EditorPanel {
 		this.editor.getHighlighter().removeAllHighlights();
 
 		if (this.boxHighlightPainters != null) {
+			BoxHighlightPainter proposedPainter = this.boxHighlightPainters.get(RenamableTokenType.PROPOSED);
+
 			for (RenamableTokenType type : tokens.keySet()) {
 				BoxHighlightPainter painter = this.boxHighlightPainters.get(type);
+
 				if (painter != null) {
-					setHighlightedTokens(tokens.get(type), painter);
+					for (Token token : tokens.get(type)) {
+						EntryReference<Entry<?>, Entry<?>> reference = this.getReference(token);
+						BoxHighlightPainter tokenPainter;
+
+						if (reference != null) {
+							EditableType t = EditableType.fromEntry(reference.entry);
+							boolean editable = t == null || this.gui.isEditable(t);
+							tokenPainter = editable ? painter : proposedPainter;
+						} else {
+							tokenPainter = painter;
+						}
+
+						this.addHighlightedToken(token, tokenPainter);
+					}
 				}
 			}
 		}
@@ -476,13 +489,11 @@ public class EditorPanel {
 		this.editor.repaint();
 	}
 
-	private void setHighlightedTokens(Iterable<Token> tokens, Highlighter.HighlightPainter painter) {
-		for (Token token : tokens) {
-			try {
-				this.editor.getHighlighter().addHighlight(token.start, token.end, painter);
-			} catch (BadLocationException ex) {
-				throw new IllegalArgumentException(ex);
-			}
+	private void addHighlightedToken(Token token, HighlightPainter tokenPainter) {
+		try {
+			this.editor.getHighlighter().addHighlight(token.start, token.end, tokenPainter);
+		} catch (BadLocationException ex) {
+			throw new IllegalArgumentException(ex);
 		}
 	}
 
@@ -507,7 +518,7 @@ public class EditorPanel {
 		if (this.source == null) return;
 		if (reference == null) return;
 
-		Collection<Token> tokens = this.controller.getTokensForReference(this.source, reference);
+		List<Token> tokens = this.controller.getTokensForReference(this.source, reference);
 		if (tokens.isEmpty()) {
 			// DEBUG
 			System.err.println(String.format("WARNING: no tokens found for %s in %s", reference, this.classHandle.getRef()));
