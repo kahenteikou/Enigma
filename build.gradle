@@ -1,12 +1,10 @@
 plugins {
     id 'maven-publish'
-    id 'maven'
 }
 
 subprojects {
     apply plugin: 'java'
     apply plugin: 'maven-publish'
-    apply plugin: 'maven'
 
     sourceCompatibility = JavaVersion.VERSION_16
     targetCompatibility = JavaVersion.VERSION_16
@@ -37,13 +35,6 @@ subprojects {
 
     java {
         withSourcesJar()
-    }
-    uploadArchives {
-        repositories {
-            mavenDeployer {
-                repository(url: "z:\\maven")
-            }
-        }
     }
 
     tasks.withType(JavaCompile).configureEach {
