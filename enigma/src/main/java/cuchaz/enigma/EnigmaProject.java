@@ -18,16 +18,16 @@ import java.util.stream.Stream;
 
 import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
-import cuchaz.enigma.api.service.ObfuscationTestService;
-import cuchaz.enigma.classprovider.ObfuscationFixClassProvider;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.tree.ClassNode;
 
 import cuchaz.enigma.analysis.EntryReference;
 import cuchaz.enigma.analysis.index.JarIndex;
 import cuchaz.enigma.api.service.NameProposalService;
+import cuchaz.enigma.api.service.ObfuscationTestService;
 import cuchaz.enigma.bytecode.translators.TranslationClassVisitor;
 import cuchaz.enigma.classprovider.ClassProvider;
+import cuchaz.enigma.classprovider.ObfuscationFixClassProvider;
 import cuchaz.enigma.source.Decompiler;
 import cuchaz.enigma.source.DecompilerService;
 import cuchaz.enigma.source.SourceSettings;
@@ -38,6 +38,7 @@ import cuchaz.enigma.translation.mapping.EntryRemapper;
 import cuchaz.enigma.translation.mapping.MappingsChecker;
 import cuchaz.enigma.translation.mapping.tree.DeltaTrackingTree;
 import cuchaz.enigma.translation.mapping.tree.EntryTree;
+import cuchaz.enigma.translation.representation.entry.ClassDefEntry;
 import cuchaz.enigma.translation.representation.entry.ClassEntry;
 import cuchaz.enigma.translation.representation.entry.Entry;
 import cuchaz.enigma.translation.representation.entry.LocalVariableEntry;
@@ -101,6 +102,7 @@ public class EnigmaProject {
 		DeltaTrackingTree<EntryMapping> mappings = mapper.getObfToDeobf();
 
 		Collection<Entry<?>> dropped = dropMappings(mappings, progress);
+
 		for (Entry<?> entry : dropped) {
 			mappings.trackChange(entry);
 		}
@@ -112,6 +114,7 @@ public class EnigmaProject {
 		MappingsChecker.Dropped dropped = checker.dropBrokenMappings(progress);
 
 		Map<Entry<?>, String> droppedMappings = dropped.getDroppedMappings();
+
 		for (Map.Entry<Entry<?>, String> mapping : droppedMappings.entrySet()) {
 			System.out.println("WARNING: Couldn't find " + mapping.getKey() + " (" + mapping.getValue() + ") in jar. Mapping was dropped.");
 		}
@@ -124,6 +127,7 @@ public class EnigmaProject {
 			// HACKHACK: Object methods are not obfuscated identifiers
 			String name = obfMethodEntry.getName();
 			String sig = obfMethodEntry.getDesc().toString();
+
 			//TODO replace with a map or check if declaring class is java.lang.Object
 			if (name.equals("clone") && sig.equals("()Ljava/lang/Object;")) {
 				return false;
@@ -147,6 +151,16 @@ public class EnigmaProject {
 				return false;
 			} else if (name.equals("wait") && sig.equals("(JI)V")) {
 				return false;
+			} else {
+				ClassDefEntry parent = jarIndex.getEntryIndex().getDefinition(obfMethodEntry.getParent());
+
+				if (parent != null && parent.getSuperClass() != null && parent.getSuperClass().getFullName().equals("java/lang/Enum")) {
+					if (name.equals("values") && sig.equals("()[L" + parent.getFullName() + ";")) {
+						return false;
+					} else if (name.equals("valueOf") && sig.equals("(Ljava/lang/String;)L" + parent.getFullName() + ";")) {
+						return false;
+					}
+				}
 			}
 		} else if (obfEntry instanceof LocalVariableEntry && !((LocalVariableEntry) obfEntry).isArgument()) {
 			return false;
@@ -163,6 +177,7 @@ public class EnigmaProject {
 		String name = entry.getName();
 
 		List<ObfuscationTestService> obfuscationTestServices = this.getEnigma().getServices().get(ObfuscationTestService.TYPE);
+
 		if (!obfuscationTestServices.isEmpty()) {
 			for (ObfuscationTestService service : obfuscationTestServices) {
 				if (service.testDeobfuscated(entry)) {
@@ -172,6 +187,7 @@ public class EnigmaProject {
 		}
 
 		List<NameProposalService> nameProposalServices = this.getEnigma().getServices().get(NameProposalService.TYPE);
+
 		if (!nameProposalServices.isEmpty()) {
 			for (NameProposalService service : nameProposalServices) {
 				if (service.proposeName(entry, mapper).isPresent()) {
@@ -181,6 +197,7 @@ public class EnigmaProject {
 		}
 
 		String mappedName = mapper.deobfuscate(entry).getName();
+
 		if (mappedName != null && !mappedName.isEmpty() && !mappedName.equals(name)) {
 			return false;
 		}
@@ -198,22 +215,20 @@ public class EnigmaProject {
 		AtomicInteger count = new AtomicInteger();
 		progress.init(classEntries.size(), I18n.translate("progress.classes.deobfuscating"));
 
-		Map<String, ClassNode> compiled = classEntries.parallelStream()
-				.map(entry -> {
-					ClassEntry translatedEntry = deobfuscator.translate(entry);
-					progress.step(count.getAndIncrement(), translatedEntry.toString());
+		Map<String, ClassNode> compiled = classEntries.parallelStream().map(entry -> {
+			ClassEntry translatedEntry = deobfuscator.translate(entry);
+			progress.step(count.getAndIncrement(), translatedEntry.toString());
 
-					ClassNode node = fixingClassProvider.get(entry.getFullName());
-					if (node != null) {
-						ClassNode translatedNode = new ClassNode();
-						node.accept(new TranslationClassVisitor(deobfuscator, Enigma.ASM_VERSION, translatedNode));
-						return translatedNode;
-					}
+			ClassNode node = fixingClassProvider.get(entry.getFullName());
 
-					return null;
-				})
-				.filter(Objects::nonNull)
-				.collect(Collectors.toMap(n -> n.name, Functions.identity()));
+			if (node != null) {
+				ClassNode translatedNode = new ClassNode();
+				node.accept(new TranslationClassVisitor(deobfuscator, Enigma.ASM_VERSION, translatedNode));
+				return translatedNode;
+			}
+
+			return null;
+		}).filter(Objects::nonNull).collect(Collectors.toMap(n -> n.name, Functions.identity()));
 
 		return new JarExport(mapper, compiled);
 	}
@@ -254,9 +269,7 @@ public class EnigmaProject {
 		}
 
 		public Stream<ClassSource> decompileStream(ProgressListener progress, DecompilerService decompilerService, DecompileErrorStrategy errorStrategy) {
-			Collection<ClassNode> classes = this.compiled.values().stream()
-					.filter(classNode -> classNode.name.indexOf('$') == -1)
-					.toList();
+			Collection<ClassNode> classes = this.compiled.values().stream().filter(classNode -> classNode.name.indexOf('$') == -1).toList();
 
 			progress.init(classes.size(), I18n.translate("progress.classes.decompiling"));
 
@@ -265,33 +278,34 @@ public class EnigmaProject {
 
 			AtomicInteger count = new AtomicInteger();
 
-			return classes.parallelStream()
-					.map(translatedNode -> {
-						progress.step(count.getAndIncrement(), translatedNode.name);
+			return classes.parallelStream().map(translatedNode -> {
+				progress.step(count.getAndIncrement(), translatedNode.name);
 
-						String source = null;
-						try {
-							source = decompileClass(translatedNode, decompiler);
-						} catch (Throwable throwable) {
-							switch (errorStrategy) {
-								case PROPAGATE: throw throwable;
-								case IGNORE: break;
-								case TRACE_AS_SOURCE: {
-									StringWriter writer = new StringWriter();
-									throwable.printStackTrace(new PrintWriter(writer));
-									source = writer.toString();
-									break;
-								}
-							}
-						}
+				String source = null;
 
-						if (source == null) {
-							return null;
-						}
+				try {
+					source = decompileClass(translatedNode, decompiler);
+				} catch (Throwable throwable) {
+					switch (errorStrategy) {
+					case PROPAGATE:
+						throw throwable;
+					case IGNORE:
+						break;
+					case TRACE_AS_SOURCE: {
+						StringWriter writer = new StringWriter();
+						throwable.printStackTrace(new PrintWriter(writer));
+						source = writer.toString();
+						break;
+					}
+					}
+				}
 
-						return new ClassSource(translatedNode.name, source);
-					})
-					.filter(Objects::nonNull);
+				if (source == null) {
+					return null;
+				}
+
+				return new ClassSource(translatedNode.name, source);
+			}).filter(Objects::nonNull);
 		}
 
 		private String decompileClass(ClassNode translatedNode, Decompiler decompiler) {
@@ -310,6 +324,7 @@ public class EnigmaProject {
 			progress.init(decompiled.size(), I18n.translate("progress.sources.writing"));
 
 			int count = 0;
+
 			for (ClassSource source : decompiled) {
 				progress.step(count++, source.name);
 
@@ -329,7 +344,6 @@ public class EnigmaProject {
 		}
 
 		public void writeTo(Path path) throws IOException {
-			Files.createDirectories(path.getParent());
 			try (BufferedWriter writer = Files.newBufferedWriter(path)) {
 				writer.write(source);
 			}

@@ -4,10 +4,19 @@ import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
-import javax.swing.*;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 
 import cuchaz.enigma.gui.Gui;
 import cuchaz.enigma.gui.config.UiConfig;
@@ -19,21 +28,22 @@ import cuchaz.enigma.gui.util.ScaleUtil;
 import cuchaz.enigma.utils.I18n;
 
 public class StatsDialog {
-
 	public static void show(Gui gui) {
 		ProgressDialog.runOffThread(gui.getFrame(), listener -> {
 			final StatsGenerator statsGenerator = new StatsGenerator(gui.getController().project);
 			final Map<StatsMember, StatsResult> results = new HashMap<>();
+
 			for (StatsMember member : StatsMember.values()) {
 				results.put(member, statsGenerator.generate(listener, Collections.singleton(member), "", false));
 			}
-			SwingUtilities.invokeLater(() -> show(gui, results));
+
+			SwingUtilities.invokeLater(() -> show(gui, results, ""));
 		});
 	}
 
-	public static void show(Gui gui, Map<StatsMember, StatsResult> results) {
+	public static void show(Gui gui, Map<StatsMember, StatsResult> results, String packageName) {
 		// init frame
-		JDialog dialog = new JDialog(gui.getFrame(), I18n.translate("menu.file.stats.title"), true);
+		JDialog dialog = new JDialog(gui.getFrame(), packageName.isEmpty() ? I18n.translate("menu.file.stats.title") : I18n.translateFormatted("menu.file.stats.title_filtered", packageName), true);
 		Container contentPane = dialog.getContentPane();
 		contentPane.setLayout(new GridBagLayout());
 
@@ -70,10 +80,30 @@ public class StatsDialog {
 		topLevelPackage.setText(UiConfig.getLastTopLevelPackage());
 		contentPane.add(topLevelPackage, cb1.pos(0, results.size() + 2).fill(GridBagConstraints.HORIZONTAL).build());
 
+		// Show filter button
+		JButton filterButton = new JButton(I18n.translate("menu.file.stats.filter"));
+		filterButton.addActionListener(action -> {
+			dialog.dispose();
+			ProgressDialog.runOffThread(gui.getFrame(), listener -> {
+				UiConfig.setLastTopLevelPackage(topLevelPackage.getText());
+				UiConfig.save();
+
+				final StatsGenerator statsGenerator = new StatsGenerator(gui.getController().project);
+				final Map<StatsMember, StatsResult> filteredResults = new HashMap<>();
+
+				for (StatsMember member : StatsMember.values()) {
+					filteredResults.put(member, statsGenerator.generate(listener, Collections.singleton(member), UiConfig.getLastTopLevelPackage(), false));
+				}
+
+				SwingUtilities.invokeLater(() -> show(gui, filteredResults, UiConfig.getLastTopLevelPackage()));
+			});
+		});
+		contentPane.add(filterButton, cb1.pos(0, results.size() + 3).anchor(GridBagConstraints.EAST).build());
+
 		// show synthetic members option
 		JCheckBox syntheticParametersOption = new JCheckBox(I18n.translate("menu.file.stats.synthetic_parameters"));
 		syntheticParametersOption.setSelected(UiConfig.shouldIncludeSyntheticParameters());
-		contentPane.add(syntheticParametersOption, cb1.pos(0, results.size() + 3).build());
+		contentPane.add(syntheticParametersOption, cb1.pos(0, results.size() + 4).build());
 
 		// show generate button
 		JButton button = new JButton(I18n.translate("menu.file.stats.generate"));
@@ -88,7 +118,7 @@ public class StatsDialog {
 			generateStats(gui, checkboxes, topLevelPackage.getText(), syntheticParametersOption.isSelected());
 		});
 
-		contentPane.add(button, cb1.pos(0, results.size() + 4).weightY(1.0).anchor(GridBagConstraints.SOUTHEAST).build());
+		contentPane.add(button, cb1.pos(0, results.size() + 5).weightY(1.0).anchor(GridBagConstraints.SOUTHWEST).build());
 
 		// add action listener to each checkbox
 		checkboxes.forEach((key, value) -> value.addActionListener(action -> {
@@ -111,12 +141,7 @@ public class StatsDialog {
 
 	private static void generateStats(Gui gui, Map<StatsMember, JCheckBox> checkboxes, String topLevelPackage, boolean includeSynthetic) {
 		// get members from selected checkboxes
-		Set<StatsMember> includedMembers = checkboxes
-				.entrySet()
-				.stream()
-				.filter(entry -> entry.getValue().isSelected())
-				.map(Map.Entry::getKey)
-				.collect(Collectors.toSet());
+		Set<StatsMember> includedMembers = checkboxes.entrySet().stream().filter(entry -> entry.getValue().isSelected()).map(Map.Entry::getKey).collect(Collectors.toSet());
 
 		// checks if a project is open
 		if (gui.getController().project != null) {
